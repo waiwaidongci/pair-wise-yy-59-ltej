@@ -11,6 +11,7 @@ import {
   useParams
 } from '@tanstack/react-router';
 import {
+  AlertOctagon,
   AlertTriangle,
   ArrowLeft,
   Check,
@@ -20,22 +21,37 @@ import {
   Copy,
   Eye,
   FileCheck2,
+  FileSignature,
   FileText,
+  FileWarning,
   Highlighter,
+  History,
   Layers3,
+  Lock,
   Menu,
-  PanelLeftClose,
+  RefreshCw,
+  RotateCw,
   ScanSearch,
   ShieldCheck,
   Stamp,
   Tags,
-  UploadCloud
+  Unlock,
+  UploadCloud,
+  UserCheck
 } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { Badge, Button, Card, Dialog, Tabs, X } from './components/ui';
 import { useDisclosureStore, type DisclosureRecord } from './store';
+import {
+  REVIEWERS,
+  emptyConclusions,
+  releaseReadiness,
+  useReviewStore,
+  type ReviewConclusions,
+  type Reviewer
+} from './reviewStore';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -348,50 +364,346 @@ function ReviewPage() {
 
 function QualityPage() {
   const { documents } = useDisclosureStore();
-  const store = useDisclosureStore();
-  const doc = documents[1];
-  const checks = [
-    { id: 'forbidden-terms', label: '全文禁词与姓名复核', detail: '扫描原始页和发布页文本层' },
-    { id: 'page-number', label: '页序与页码连续性', detail: '检查拆页、合并及漏页情况' },
-    { id: 'image-boundary', label: '图像边界残片', detail: '逐页比较遮蔽边界 2mm 区域' },
-    { id: 'metadata', label: '文档元数据清理', detail: '作者、修订人、批注和隐藏字段' }
-  ];
+  const touchReview = useReviewStore((state) => state.touchReview);
+  const reconcile = useReviewStore((state) => state.reconcile);
+  const signReview = useReviewStore((state) => state.signReview);
+  const retryWrite = useReviewStore((state) => state.retryWrite);
+  const refreeze = useReviewStore((state) => state.refreeze);
+  const resolveInvalidation = useReviewStore((state) => state.resolveInvalidation);
+  const clearConflictDraft = useReviewStore((state) => state.clearConflictDraft);
+  const setFaultInjection = useReviewStore((state) => state.setFaultInjection);
+  const [docId, setDocId] = useState('DOC-00427');
+  const doc = documents.find((item) => item.id === docId) ?? documents[0];
+  const review = useReviewStore((state) => state.reviews[doc.id]);
+  const faultInjection = useReviewStore((state) => state.faultInjection);
+  const writes = useReviewStore((state) => Object.values(state.writes).filter((w) => w.documentId === doc.id));
+
+  const [conclusions, setConclusions] = useState<Record<string, ReviewConclusions>>({});
+  const [requestNos, setRequestNos] = useState<Record<string, string>>({});
+  const [flash, setFlash] = useState<{ type: 'ok' | 'err' | 'conflict'; msg: string } | null>(null);
+
+  // 进入复核页：旧草稿无快照版本时先兼容升级。
+  useEffect(() => { touchReview(doc.id); }, [doc.id, touchReview]);
+  // 文档变化后对账：页序 / 元数据 / 区域版本变化会触发签署失效。
+  useEffect(() => {
+    reconcile(doc.id);
+  }, [doc.id, reconcile, doc.redactions, doc.classification, doc.pages, doc.title, doc.bundle]);
+  // 新一轮复核：清空两人结论与请求号。
+  useEffect(() => {
+    setConclusions({});
+    setRequestNos({});
+  }, [review?.round]);
+
+  const readiness = releaseReadiness(review);
+  const signedIds = new Set((review?.signatures ?? []).map((s) => s.reviewerId));
+  const allRegionIds = doc.redactions.map((r) => r.id);
+
+  const getConclusions = (reviewerId: string): ReviewConclusions => conclusions[reviewerId] ?? emptyConclusions();
+  const updateConclusions = (reviewerId: string, patch: Partial<ReviewConclusions>) => {
+    setConclusions((prev) => ({ ...prev, [reviewerId]: { ...(prev[reviewerId] ?? emptyConclusions()), ...patch } }));
+  };
+
+  const handleSign = (reviewer: Reviewer) => {
+    const c = getConclusions(reviewer.id);
+    const full: ReviewConclusions = {
+      pageOrderOk: c.pageOrderOk,
+      metadataClean: c.metadataClean,
+      regionIds: c.regionIds.length > 0 ? c.regionIds : allRegionIds
+    };
+    const requestNo = requestNos[reviewer.id] ?? `REQ-${Date.now()}-${reviewer.id}`;
+    if (!requestNos[reviewer.id]) setRequestNos((prev) => ({ ...prev, [reviewer.id]: requestNo }));
+    const res = signReview({
+      documentId: doc.id,
+      requestNo,
+      reviewerId: reviewer.id,
+      conclusions: full,
+      snapshotVersion: review?.snapshot?.snapshotVersion ?? 1,
+      simulateFailure: faultInjection
+    });
+    if (res.ok) {
+      setFlash({ type: 'ok', msg: res.reused ? `已沿用第一次结果（${requestNo}），未新增签署` : `已接收 ${reviewer.name} 的签署（${requestNo}）` });
+    } else if (res.conflict) {
+      setFlash({ type: 'conflict', msg: '递交冲突：只接收先到版本，本递交已保留为草稿' });
+    } else {
+      setFlash({ type: 'err', msg: res.error ?? '写入失败' });
+    }
+  };
+
+  const handleRetry = (requestNo: string) => {
+    const res = retryWrite(requestNo);
+    setFlash({ type: res.ok ? 'ok' : 'err', msg: res.ok ? `已凭原请求号 ${requestNo} 恢复，沿用第一次结果` : (res.error ?? '恢复失败') });
+  };
+
+  const kindLabel = (kind: string) => (kind === 'page-order' ? '页序' : kind === 'metadata' ? '元数据' : '区域');
+  const kindTone = (kind: string) => (kind === 'page-order' ? 'blue' : kind === 'metadata' ? 'amber' : 'red');
+
   return (
     <div className="page">
-      <header className="page-heading"><div><small>QUALITY ASSURANCE / SIDE-BY-SIDE</small><h1>发布质控双人复核</h1><p>并排检查原始页与发布页，所有差异必须留下复核结论。</p></div><Button><FileCheck2 size={16} /> 导出发布清单</Button></header>
+      <header className="page-heading">
+        <div>
+          <small>QUALITY ASSURANCE / DUAL REVIEW</small>
+          <h1>发布质控双人复核</h1>
+          <p>发起即冻结原始页、发布页、去密区域与复核结论；两人签署后任何页序、元数据或区域版本变化，两份签署一起失效并锁定发布包。</p>
+        </div>
+        <div className="heading-actions">
+          <label className="doc-picker">
+            <span>复核文档</span>
+            <select value={docId} onChange={(e) => setDocId(e.target.value)}>
+              {documents.map((item) => <option key={item.id} value={item.id}>{item.id} · {item.title}</option>)}
+            </select>
+          </label>
+          <Button variant="outline" onClick={() => refreeze(doc.id, '林清')}><RotateCw size={15} /> 重新冻结快照</Button>
+        </div>
+      </header>
+
+      {flash && (
+        <div className={`flash-banner ${flash.type}`}>
+          {flash.type === 'ok' ? <Check size={16} /> : flash.type === 'conflict' ? <AlertOctagon size={16} /> : <AlertTriangle size={16} />}
+          <span>{flash.msg}</span>
+          <button onClick={() => setFlash(null)} aria-label="关闭">×</button>
+        </div>
+      )}
+
+      {/* 冻结快照条 */}
+      <div className="snapshot-banner">
+        <div className="snapshot-main">
+          <FileSignature size={17} />
+          <div>
+            <strong>冻结快照 v{review?.snapshot?.snapshotVersion ?? 0}</strong>
+            <span>
+              {review?.snapshot
+                ? `轮次 ${review.round} · 冻结于 ${new Date(review.snapshot.frozenAt).toLocaleTimeString('zh-CN', { hour12: false })} · ${review.snapshot.frozenBy} · ${review.snapshot.pageCount} 页 · ${review.snapshot.regions.length} 个区域`
+                : '尚未冻结'}
+            </span>
+          </div>
+        </div>
+        <div className="snapshot-tags">
+          {review?.legacyUpgraded && <Badge tone="blue"><History size={11} /> 旧草稿已兼容升级</Badge>}
+          <Badge tone={review?.releaseBlocked ? 'red' : 'green'}>
+            {review?.releaseBlocked ? <Lock size={11} /> : <Unlock size={11} />}
+            {review?.releaseBlocked ? '发布包已锁定' : '发布包未锁定'}
+          </Badge>
+          <Badge tone="neutral">签署 {review?.signatures.length ?? 0}/2</Badge>
+        </div>
+      </div>
+
       <div className="comparison-banner">
-        <div><Eye size={17} /><strong>{doc.title}</strong><span>版本 3.4 · 双人复核</span></div>
-        <Badge tone="amber">等待复审员 2/2</Badge>
+        <div><Eye size={17} /><strong>{doc.title}</strong><span>{doc.id} · {doc.bundle}</span></div>
+        <Badge tone={signedIds.size === 2 ? 'green' : 'amber'}>{signedIds.size === 2 ? '双人已签署' : `等待复审员 ${signedIds.size}/2`}</Badge>
       </div>
       <div className="compare-grid">
-        <Card className="compare-panel"><div className="compare-head"><span>原始页</span><Badge tone="neutral">源文件</Badge></div><div className="compare-page"><PdfPage pageNumber={1} /></div></Card>
-        <Card className="compare-panel"><div className="compare-head"><span>发布页</span><Badge tone="green">已遮蔽</Badge></div><div className="compare-page redacted-preview"><PdfPage pageNumber={1} redacted /><div className="demo-mask mask-one" /><div className="demo-mask mask-two" /></div></Card>
+        <Card className="compare-panel"><div className="compare-head"><span>原始页</span><Badge tone="neutral">源文件 · 已冻结</Badge></div><div className="compare-page"><PdfPage pageNumber={1} /></div></Card>
+        <Card className="compare-panel"><div className="compare-head"><span>发布页</span><Badge tone="green">已遮蔽 · 已冻结</Badge></div><div className="compare-page redacted-preview"><PdfPage pageNumber={1} redacted /><div className="demo-mask mask-one" /><div className="demo-mask mask-two" /></div></Card>
       </div>
-      <div className="quality-bottom">
-        <Card className="checks-card"><div className="card-title"><ClipboardCheck size={17} /><strong>发布前校验项</strong></div>{checks.map((check) => <button className="check-row" key={check.id} onClick={() => store.toggleReviewCheck(check.id)}><span className={store.reviewChecks[check.id] ? 'checked' : ''}>{store.reviewChecks[check.id] && <Check size={13} />}</span><div><strong>{check.label}</strong><small>{check.detail}</small></div></button>)}</Card>
-        <Card className="decision-card"><div className="card-title"><ShieldCheck size={17} /><strong>复核结论</strong></div><p>本批次共有 <b>{doc.redactions.length}</b> 个去密区域，其中已确认 {doc.redactions.filter((item) => item.status === 'confirmed').length} 个。</p><label><input type="checkbox" checked={store.metadataCleaned} onChange={store.toggleMetadata} /> 已确认元数据清理</label><div className="decision-actions"><Button variant="outline"><ArrowLeft size={15} /> 退回补件</Button><Button disabled={!store.metadataCleaned || Object.values(store.reviewChecks).some((value) => !value)} onClick={store.markReady}><Check size={15} /> 通过并标记可发布</Button></div></Card>
+
+      <div className="dual-review-grid">
+        {REVIEWERS.map((reviewer) => {
+          const sig = review?.signatures.find((s) => s.reviewerId === reviewer.id);
+          const c = getConclusions(reviewer.id);
+          const draft = review?.conflictDraft?.reviewerId === reviewer.id ? review.conflictDraft : null;
+          return (
+            <Card key={reviewer.id} className={`sign-card ${sig ? 'signed' : ''}`}>
+              <div className="sign-head">
+                <div className="sign-avatar"><UserCheck size={16} /></div>
+                <div>
+                  <strong>{reviewer.name}</strong>
+                  <span>{reviewer.role}</span>
+                </div>
+                <Badge tone={sig ? 'green' : 'amber'}>{sig ? '已签署' : '未签署'}</Badge>
+              </div>
+
+              {sig ? (
+                <div className="sign-meta">
+                  <p><Check size={13} /> 已于 {new Date(sig.signedAt).toLocaleTimeString('zh-CN', { hour12: false })} 签署</p>
+                  <p>请求号 <code>{sig.requestNo}</code></p>
+                  <p>快照版本 v{sig.snapshotVersion} · 结论哈希 <code>{sig.conclusionsHash}</code></p>
+                </div>
+              ) : (
+                <div className="sign-form">
+                  <label className={c.pageOrderOk ? 'on' : ''}>
+                    <input type="checkbox" checked={c.pageOrderOk} onChange={(e) => updateConclusions(reviewer.id, { pageOrderOk: e.target.checked })} />
+                    <span><strong>页序核对</strong><small>页序连续，无拆页、合并或漏页</small></span>
+                  </label>
+                  <label className={c.metadataClean ? 'on' : ''}>
+                    <input type="checkbox" checked={c.metadataClean} onChange={(e) => updateConclusions(reviewer.id, { metadataClean: e.target.checked })} />
+                    <span><strong>元数据清理</strong><small>作者、修订人、批注与隐藏字段已清除</small></span>
+                  </label>
+                  <label className={c.regionIds.length === allRegionIds.length && allRegionIds.length > 0 ? 'on' : ''}>
+                    <input
+                      type="checkbox"
+                      checked={c.regionIds.length === allRegionIds.length && allRegionIds.length > 0}
+                      onChange={(e) => updateConclusions(reviewer.id, { regionIds: e.target.checked ? allRegionIds : [] })}
+                    />
+                    <span><strong>各区域结论一致</strong><small>{allRegionIds.length} 个去密区域已逐区核对</small></span>
+                  </label>
+                  <Button
+                    onClick={() => handleSign(reviewer)}
+                    disabled={!c.pageOrderOk || !c.metadataClean || !(c.regionIds.length === allRegionIds.length && allRegionIds.length > 0)}
+                  >
+                    <FileSignature size={15} /> 确认并签署
+                  </Button>
+                </div>
+              )}
+
+              {draft && (
+                <div className="conflict-draft">
+                  <div className="conflict-head"><AlertOctagon size={14} /><strong>冲突 · 草稿已保留</strong></div>
+                  <p>{draft.reason}</p>
+                  <p>请求号 <code>{draft.requestNo}</code> · {new Date(draft.keptAt).toLocaleTimeString('zh-CN', { hour12: false })}</p>
+                  <Button variant="outline" onClick={() => clearConflictDraft(doc.id)}>放弃草稿</Button>
+                </div>
+              )}
+            </Card>
+          );
+        })}
       </div>
+
+      {/* 失效项清单 */}
+      <Card className="invalidation-card">
+        <div className="card-title"><FileWarning size={17} /><strong>失效项与受影响对象</strong><span>{review?.invalidations.filter((i) => !i.resolved).length ?? 0} 项未清</span></div>
+        {(review?.invalidations.length ?? 0) === 0 ? (
+          <p className="muted">初审后若页序、元数据或任一区域版本变化，两份签署将一起失效并在此列出受影响对象。</p>
+        ) : (
+          <div className="invalidation-list">
+            {review!.invalidations.map((item) => (
+              <div key={item.id} className={`invalidation-row ${item.resolved ? 'resolved' : ''}`}>
+                <Badge tone={kindTone(item.kind)}>{kindLabel(item.kind)}</Badge>
+                <div className="invalidation-main">
+                  <strong>{item.label}</strong>
+                  <span>{item.reason}</span>
+                </div>
+                <small>{new Date(item.detectedAt).toLocaleTimeString('zh-CN', { hour12: false })}</small>
+                {item.resolved
+                  ? <Badge tone="green">已结清</Badge>
+                  : <Button variant="outline" onClick={() => resolveInvalidation(doc.id, item.id)}>结清</Button>}
+              </div>
+            ))}
+          </div>
+        )}
+        {review && review.signatureHistory.length > 0 && (
+          <div className="signature-history">
+            <div className="card-title"><History size={15} /><strong>签署历史（失效留痕）</strong></div>
+            {review.signatureHistory.slice(0, 4).map((sig, idx) => (
+              <p key={`${sig.requestNo}-${idx}`} className={sig.valid ? '' : 'invalid'}>
+                {sig.valid ? <Check size={12} /> : <AlertOctagon size={12} />}
+                {sig.reviewerName} · v{sig.snapshotVersion} · {sig.requestNo} · {sig.valid ? '有效' : '已失效'}
+              </p>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* 发布门禁 */}
+      <Card className={`release-gate ${readiness.ready ? 'ready' : ''}`}>
+        <div className="card-title">
+          <ShieldCheck size={17} /><strong>发布批次门禁</strong>
+          <Badge tone={readiness.ready ? 'green' : 'red'}>{readiness.ready ? '可进入发布批次' : '未通过'}</Badge>
+        </div>
+        {readiness.ready ? (
+          <p className="ready-note"><Check size={14} /> 两人已签署同一快照版本，页序、元数据与各区域结论一致，可生成发布包。</p>
+        ) : (
+          <ul className="gate-reasons">
+            {readiness.reasons.map((reason) => <li key={reason}><AlertTriangle size={13} /> {reason}</li>)}
+          </ul>
+        )}
+      </Card>
+
+      {/* 写入台账与幂等恢复 */}
+      <Card className="writes-card">
+        <div className="card-title">
+          <RefreshCw size={17} /><strong>写入台账与请求号恢复</strong>
+          <label className="fault-toggle">
+            <input type="checkbox" checked={faultInjection} onChange={(e) => setFaultInjection(e.target.checked)} />
+            <span>模拟写入失败</span>
+          </label>
+        </div>
+        {writes.length === 0 ? (
+          <p className="muted">递交签署后在此留痕；写入失败可凭原请求号从最后一个完整复核项继续，重复重试沿用第一次结果。</p>
+        ) : (
+          <div className="writes-list">
+            {writes.map((w) => (
+              <div key={w.requestNo} className={`write-row ${w.status}`}>
+                <div className="write-main">
+                  <strong><code>{w.requestNo}</code></strong>
+                  <span>{w.type === 'sign' ? '签署递交' : '重新冻结'} · {w.steps.filter((s) => s.done).length}/{w.steps.length} 项完成{w.reused ? ' · 沿用第一次结果' : ''}</span>
+                  {w.resultSummary && <small>{w.resultSummary}</small>}
+                </div>
+                {w.status === 'committed' && <Badge tone="green">已提交</Badge>}
+                {w.status === 'failed' && <Badge tone="red">失败</Badge>}
+                {w.status === 'pending' && <Badge tone="amber">处理中</Badge>}
+                {w.status === 'failed' && <Button variant="outline" onClick={() => handleRetry(w.requestNo)}><RotateCw size={13} /> 凭原请求号恢复</Button>}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
 
 function BatchesPage() {
   const { documents } = useDisclosureStore();
+  const reviews = useReviewStore((state) => state.reviews);
   const [selected, setSelected] = useState<string[]>(['DOC-00418']);
   const activeDoc = documents.find((doc) => doc.id === selected[0]) ?? documents[0];
+  const selectedReviews = selected.map((id) => ({ id, review: reviews[id], readiness: releaseReadiness(reviews[id]) }));
+  const allReady = selectedReviews.length > 0 && selectedReviews.every((item) => item.readiness.ready);
+  const blockedReasons = selectedReviews.flatMap((item) => item.readiness.reasons.map((reason) => `${item.id}：${reason}`));
   return (
     <div className="page">
-      <header className="page-heading"><div><small>RELEASE BATCH / TAXONOMY</small><h1>发布批次与标签</h1><p>按案件问题、辖区和披露对象组织文档，生成可追溯发布清单。</p></div><Button>生成发布包</Button></header>
+      <header className="page-heading">
+        <div><small>RELEASE BATCH / TAXONOMY</small><h1>发布批次与标签</h1><p>按案件问题、辖区和披露对象组织文档，双人复核一致后才生成可追溯发布清单。</p></div>
+        <Button disabled={!allReady}><Lock size={15} /> 生成发布包</Button>
+      </header>
+      {!allReady && (
+        <div className="flash-banner conflict">
+          <AlertOctagon size={16} />
+          <span>所选文档未全部通过双人复核，发布包已锁定：{blockedReasons.join('；')}</span>
+        </div>
+      )}
       <div className="batch-layout">
         <Card className="batch-list"><div className="card-title"><Layers3 size={17} /><strong>发布批次</strong></div>{['第一批披露 · 审阅中', '第二批披露 · 编制中', '专家材料 · 待补充'].map((name, index) => <button key={name} className={index === 0 ? 'active' : ''}><span>BATCH-{String(index + 1).padStart(2, '0')}</span><strong>{name}</strong><small>{[48, 79, 19][index]} 份文档</small></button>)}</Card>
         <Card className="batch-content">
           <div className="card-title"><Tags size={17} /><strong>文档与案件问题映射</strong><span>{selected.length} 已选择</span></div>
           <div className="batch-table">
-            {documents.map((doc) => <label key={doc.id} className="batch-row"><input type="checkbox" checked={selected.includes(doc.id)} onChange={() => setSelected((ids) => ids.includes(doc.id) ? ids.filter((id) => id !== doc.id) : [...ids, doc.id])} /><FileText size={17} /><div><strong>{doc.title}</strong><span>{doc.id} · {doc.issue}</span></div><Badge tone={doc.status === '可发布' ? 'green' : 'amber'}>{doc.status}</Badge></label>)}
+            {documents.map((doc) => {
+              const rd = releaseReadiness(reviews[doc.id]);
+              const rv = reviews[doc.id];
+              return (
+                <label key={doc.id} className="batch-row">
+                  <input type="checkbox" checked={selected.includes(doc.id)} onChange={() => setSelected((ids) => ids.includes(doc.id) ? ids.filter((id) => id !== doc.id) : [...ids, doc.id])} />
+                  <FileText size={17} />
+                  <div>
+                    <strong>{doc.title}</strong>
+                    <span>{doc.id} · {doc.issue}</span>
+                    {rv?.snapshot && <span className="trace-line"><FileSignature size={11} /> 快照 v{rv.snapshot.snapshotVersion} · 签署 {rv.signatures.length}/2 · 轮次 {rv.round}</span>}
+                  </div>
+                  <Badge tone={rd.ready ? 'green' : rv?.releaseBlocked ? 'red' : 'amber'}>{rd.ready ? '可发布' : rv?.releaseBlocked ? '已锁定' : '复核中'}</Badge>
+                </label>
+              );
+            })}
           </div>
-          <div className="tag-editor"><h3>标签与分发级</h3><div className="tag-options">{(['合同问题', '设备缺陷', '现场安全', '损害赔偿', '仅律师可见']).map((tag, index) => <span key={tag} className={index < 3 ? 'selected' : ''}>{tag}</span>)}</div><label>导出清单说明<textarea defaultValue="按案卷编号升序导出，保留去密版本、操作者与审批时间。" /></label><Button>保存批次设置</Button></div>
+          <div className="tag-editor">
+            <h3>标签与分发级</h3>
+            <div className="tag-options">{(['合同问题', '设备缺陷', '现场安全', '损害赔偿', '仅律师可见']).map((tag, index) => <span key={tag} className={index < 3 ? 'selected' : ''}>{tag}</span>)}</div>
+            <label>导出清单说明<textarea defaultValue="按案卷编号升序导出，保留冻结快照版本、两位签署人、请求号与审批时间，支持按请求号追溯。" /></label>
+            <Button disabled={!allReady}><Lock size={14} /> 保存并生成发布包</Button>
+          </div>
         </Card>
-        <Card className="batch-summary"><div className="side-label">当前批次摘要</div><strong>{activeDoc.bundle}</strong><dl><div><dt>文档</dt><dd>{selected.length}</dd></div><div><dt>页数</dt><dd>{selected.reduce((sum, id) => sum + (documents.find((doc) => doc.id === id)?.pages ?? 0), 0)}</dd></div><div><dt>风险项</dt><dd>4</dd></div></dl><div className="summary-note"><AlertTriangle size={15} /><span>发布前仍需完成 4 项双人复核。</span></div></Card>
+        <Card className="batch-summary">
+          <div className="side-label">当前批次摘要</div>
+          <strong>{activeDoc.bundle}</strong>
+          <dl>
+            <div><dt>文档</dt><dd>{selected.length}</dd></div>
+            <div><dt>页数</dt><dd>{selected.reduce((sum, id) => sum + (documents.find((doc) => doc.id === id)?.pages ?? 0), 0)}</dd></div>
+            <div><dt>双人复核</dt><dd>{selectedReviews.filter((item) => item.readiness.ready).length}/{selected.length} 通过</dd></div>
+            <div><dt>风险项</dt><dd>4</dd></div>
+          </dl>
+          <div className={`summary-note ${allReady ? 'ok' : ''}`}>
+            {allReady ? <Check size={15} /> : <AlertTriangle size={15} />}
+            <span>{allReady ? '所选文档均已通过双人复核，可生成发布包。' : '发布前仍需完成双人复核并清除失效项。'}</span>
+          </div>
+        </Card>
       </div>
     </div>
   );

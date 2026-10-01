@@ -11,6 +11,7 @@ export type Redaction = {
   reason: string;
   privilege: string;
   status: 'draft' | 'confirmed';
+  version: number;
 };
 
 export type DisclosureRecord = {
@@ -40,9 +41,9 @@ const defaultDocuments: DisclosureRecord[] = [
     issue: '合同主体与商业条款',
     size: '8.4 MB',
     redactions: [
-      { id: 'R-01', page: 1, x: 0.12, y: 0.16, width: 0.30, height: 0.04, reason: '商业秘密', privilege: '合同保密', status: 'confirmed' },
-      { id: 'R-02', page: 1, x: 0.50, y: 0.43, width: 0.34, height: 0.06, reason: '个人手机号', privilege: '个人信息', status: 'draft' },
-      { id: 'R-03', page: 2, x: 0.11, y: 0.25, width: 0.68, height: 0.05, reason: '第三方报价', privilege: '商业敏感', status: 'confirmed' }
+      { id: 'R-01', page: 1, x: 0.12, y: 0.16, width: 0.30, height: 0.04, reason: '商业秘密', privilege: '合同保密', status: 'confirmed', version: 1 },
+      { id: 'R-02', page: 1, x: 0.50, y: 0.43, width: 0.34, height: 0.06, reason: '个人手机号', privilege: '个人信息', status: 'draft', version: 1 },
+      { id: 'R-03', page: 2, x: 0.11, y: 0.25, width: 0.68, height: 0.05, reason: '第三方报价', privilege: '商业敏感', status: 'confirmed', version: 1 }
     ]
   },
   {
@@ -57,7 +58,7 @@ const defaultDocuments: DisclosureRecord[] = [
     issue: '事故预防与整改安排',
     size: '3.1 MB',
     redactions: [
-      { id: 'R-04', page: 1, x: 0.08, y: 0.69, width: 0.74, height: 0.05, reason: '内部调查意见', privilege: '工作成果', status: 'confirmed' }
+      { id: 'R-04', page: 1, x: 0.08, y: 0.69, width: 0.74, height: 0.05, reason: '内部调查意见', privilege: '工作成果', status: 'confirmed', version: 1 }
     ]
   },
   {
@@ -72,7 +73,7 @@ const defaultDocuments: DisclosureRecord[] = [
     issue: '运行记录',
     size: '12.7 MB',
     redactions: [
-      { id: 'R-05', page: 2, x: 0.44, y: 0.56, width: 0.26, height: 0.04, reason: '人员姓名', privilege: '个人信息', status: 'confirmed' }
+      { id: 'R-05', page: 2, x: 0.44, y: 0.56, width: 0.26, height: 0.04, reason: '人员姓名', privilege: '个人信息', status: 'confirmed', version: 1 }
     ]
   }
 ];
@@ -88,7 +89,7 @@ type State = {
   selectDocument: (id: string) => void;
   setPage: (page: number) => void;
   toggleRedactionMode: () => void;
-  addRedaction: (redaction: Omit<Redaction, 'id' | 'status'>) => void;
+  addRedaction: (redaction: Omit<Redaction, 'id' | 'status' | 'version'>) => void;
   confirmRedaction: (id: string) => void;
   selectRedaction: (id: string) => void;
   updateClassification: (classification: DisclosureRecord['classification']) => void;
@@ -117,11 +118,11 @@ export const useDisclosureStore = create<State>()(
       toggleRedactionMode: () => set((state) => ({ redactionMode: !state.redactionMode })),
       addRedaction: (redaction) => set((state) => ({
         documents: state.documents.map((doc) => doc.id === state.activeDocumentId
-          ? { ...doc, redactions: [...doc.redactions, { ...redaction, id: `R-${Date.now()}`, status: 'draft' as const }] }
+          ? { ...doc, redactions: [...doc.redactions, { ...redaction, id: `R-${Date.now()}`, status: 'draft' as const, version: 1 }] }
           : doc)
       })),
       confirmRedaction: (id) => set((state) => ({
-        documents: state.documents.map((doc) => ({ ...doc, redactions: doc.redactions.map((item) => item.id === id ? { ...item, status: 'confirmed' as const } : item) }))
+        documents: state.documents.map((doc) => ({ ...doc, redactions: doc.redactions.map((item) => item.id === id ? { ...item, status: 'confirmed' as const, version: item.version + 1 } : item) }))
       })),
       selectRedaction: (id) => set({ activeRedactionId: id }),
       updateClassification: (classification) => set((state) => ({

@@ -186,6 +186,90 @@ button { cursor: pointer; }
 .summary-note { display: flex; gap: 7px; color: #8d5816; font-size: 11px; padding: 11px; background: #fff5e4; border-radius: 4px; margin-top: 14px; }
 .muted { color: #79858f; font-size: 12px; }
 
+/* ===== 双人复核台账 ===== */
+.heading-actions { display: flex; gap: 10px; align-items: center; }
+.doc-picker { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #6d7983; }
+.doc-picker select { border: 1px solid #cfd6dc; border-radius: 5px; background: white; min-height: 36px; padding: 0 8px; font-size: 12px; }
+
+.flash-banner { display: flex; align-items: center; gap: 9px; padding: 11px 14px; border-radius: 6px; margin-bottom: 14px; font-size: 12px; border: 1px solid; }
+.flash-banner span { flex: 1; }
+.flash-banner button { border: 0; background: transparent; font-size: 17px; line-height: 1; color: inherit; }
+.flash-banner.ok { background: #e7f5ef; border-color: #bfe3d4; color: #176c4f; }
+.flash-banner.err { background: #fdebec; border-color: #f3c6c8; color: #a82e35; }
+.flash-banner.conflict { background: #fff2dc; border-color: #f1d8af; color: #8d5816; }
+
+.snapshot-banner { display: flex; justify-content: space-between; align-items: center; gap: 14px; background: white; border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px; margin-bottom: 14px; }
+.snapshot-main { display: flex; align-items: center; gap: 12px; color: var(--blue); }
+.snapshot-main strong, .snapshot-main span { display: block; }
+.snapshot-main strong { font-size: 13px; color: var(--ink); }
+.snapshot-main span { font-size: 11px; color: #7a858e; margin-top: 3px; }
+.snapshot-tags { display: flex; gap: 7px; flex-wrap: wrap; }
+.snapshot-tags .badge { display: inline-flex; align-items: center; gap: 4px; }
+
+.dual-review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.sign-card { padding: 15px; }
+.sign-card.signed { border-color: #bfe3d4; }
+.sign-head { display: flex; align-items: center; gap: 10px; margin-bottom: 13px; }
+.sign-head strong, .sign-head span { display: block; }
+.sign-head strong { font-size: 13px; }
+.sign-head span { font-size: 10px; color: #7a858e; margin-top: 2px; }
+.sign-head .badge { margin-left: auto; }
+.sign-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--blue-soft); color: var(--blue); display: grid; place-items: center; }
+.sign-meta p { display: flex; align-items: center; gap: 7px; margin: 6px 0; font-size: 11px; color: #5d6973; }
+.sign-meta code, .write-main code, .conflict-draft code { background: #eef1f3; padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+.sign-form label { display: flex; gap: 9px; align-items: flex-start; padding: 9px 10px; border: 1px solid #e3e8ec; border-radius: 5px; margin-bottom: 8px; cursor: pointer; }
+.sign-form label.on { background: var(--blue-soft); border-color: #9cb9ef; }
+.sign-form label input { margin-top: 2px; }
+.sign-form label span { display: block; }
+.sign-form label strong { font-size: 12px; }
+.sign-form label small { display: block; font-size: 10px; color: #7a858e; margin-top: 2px; }
+.sign-form .button { width: 100%; margin-top: 6px; }
+
+.conflict-draft { margin-top: 12px; padding: 11px; border: 1px dashed #e3b26a; background: #fff8ec; border-radius: 5px; }
+.conflict-head { display: flex; align-items: center; gap: 6px; color: #8d5816; margin-bottom: 6px; }
+.conflict-head strong { font-size: 12px; }
+.conflict-draft p { margin: 5px 0; font-size: 11px; color: #6b5d48; line-height: 1.5; }
+.conflict-draft .button { margin-top: 7px; }
+
+.invalidation-card, .release-gate, .writes-card { padding: 15px; margin-bottom: 14px; }
+.invalidation-list { display: grid; gap: 8px; }
+.invalidation-row { display: flex; align-items: center; gap: 11px; padding: 10px 11px; border: 1px solid #e7eaed; border-radius: 5px; }
+.invalidation-row.resolved { opacity: .6; }
+.invalidation-main { flex: 1; min-width: 0; }
+.invalidation-main strong, .invalidation-main span { display: block; }
+.invalidation-main strong { font-size: 12px; }
+.invalidation-main span { font-size: 10px; color: #7a858e; margin-top: 2px; }
+.invalidation-row small { color: #8a959f; font-size: 10px; white-space: nowrap; }
+.signature-history { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.signature-history p { display: flex; align-items: center; gap: 7px; margin: 5px 0; font-size: 11px; color: #5d6973; }
+.signature-history p.invalid { color: var(--red); }
+
+.release-gate.ready { border-color: #bfe3d4; background: #f7fcf9; }
+.ready-note { display: flex; align-items: center; gap: 8px; color: #176c4f; font-size: 12px; margin: 8px 0 0; }
+.gate-reasons { margin: 8px 0 0; padding: 0; list-style: none; }
+.gate-reasons li { display: flex; align-items: center; gap: 7px; color: #a82e35; font-size: 12px; padding: 5px 0; }
+
+.writes-list { display: grid; gap: 8px; }
+.write-row { display: flex; align-items: center; gap: 11px; padding: 10px 11px; border: 1px solid #e7eaed; border-radius: 5px; }
+.write-row.failed { border-color: #f3c6c8; background: #fdf6f6; }
+.write-main { flex: 1; min-width: 0; }
+.write-main strong, .write-main span, .write-main small { display: block; }
+.write-main span { font-size: 11px; color: #7a858e; margin-top: 3px; }
+.write-main small { font-size: 10px; color: #8a959f; margin-top: 3px; }
+.fault-toggle { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 11px; color: #8d5816; }
+
+.trace-line { display: flex !important; align-items: center; gap: 4px; font-size: 10px !important; color: #245bb9 !important; margin-top: 4px !important; }
+.summary-note.ok { background: #e7f5ef; color: #176c4f; }
+
+@media (max-width: 1100px) {
+  .dual-review-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .snapshot-banner { flex-direction: column; align-items: flex-start; }
+  .heading-actions { flex-wrap: wrap; }
+  .invalidation-row, .write-row { flex-wrap: wrap; }
+}
+
 @media (max-width: 1100px) {
   .document-row { grid-template-columns: 38px minmax(200px, 1fr) 88px 80px 72px; }
   .document-row .doc-field:nth-of-type(3) { display: none; }
